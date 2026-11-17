@@ -34,7 +34,7 @@ class OploverzProvider : MainAPI() {
    newEpisode(a.attr("href")) { name = a.text() }
   }.reversed()
   return newAnimeLoadResponse(title, url, TvType.Anime) {
-   addEpisodes(DubStatus.Sub, episodes)
+   addEpisodes(DubStatus.Subbed, episodes)
    posterUrl = poster
    plot = doc.selectFirst("div.entry-content")?.text()
    tags = doc.select("div.genxed a").map { it.text() }
