@@ -19,11 +19,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build CloudStream plugins
         run: gradle make makePluginsJson
-      - name: Publish manifest and .cs3 files
+      - name: Collect manifest and plugin packages
+        run: |
+          mkdir -p dist
+          cp build/plugins.json dist/plugins.json
+          find . -type f -name '*.cs3' -exec cp {} dist/ \;
+          test -s dist/plugins.json
+          ls -lah dist
+      - name: Publish to builds branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           publish_branch: builds
-          publish_dir: build
+          publish_dir: dist
           github_token: ${{ secrets.GITHUB_TOKEN }}
           keep_files: false
           force_orphan: true
