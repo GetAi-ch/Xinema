@@ -6,9 +6,8 @@ import org.jsoup.nodes.Element
 class OploverzProvider : MainAPI() {
  override var mainUrl = "https://oploverz.diy"
  override var name = "Oploverz"
- override val lang = "id"
+ override var lang = "id"
  override val hasMainPage = true
- override val hasSearch = true
  override val hasQuickSearch = false
  override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
 
@@ -32,9 +31,10 @@ class OploverzProvider : MainAPI() {
   val poster = doc.selectFirst("div.bigcontent img")?.let { it.attr("data-src").ifBlank { it.attr("src") } }
   val episodes = doc.select("div.lstepsiode.listeps ul li").map { li ->
    val a = li.selectFirst("a") ?: li
-   newEpisode(a.attr("href"), a.text())
+   newEpisode(a.attr("href")) { name = a.text() }
   }.reversed()
-  return newAnimeLoadResponse(title, url, TvType.Anime, episodes) {
+  return newAnimeLoadResponse(title, url, TvType.Anime) {
+   addEpisodes(DubStatus.Sub, episodes)
    posterUrl = poster
    plot = doc.selectFirst("div.entry-content")?.text()
    tags = doc.select("div.genxed a").map { it.text() }
