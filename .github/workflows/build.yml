@@ -26,8 +26,19 @@ jobs:
         run: |
           mkdir -p dist
           cp build/plugins.json dist/plugins.json
+          cat > dist/repo.json <<'EOF'
+          {
+            "name": "Xinema",
+            "description": "Xinema CloudStream Repository",
+            "manifestVersion": 1,
+            "pluginLists": [
+              "https://raw.githubusercontent.com/GetAi-ch/Xinema/builds/plugins.json"
+            ]
+          }
+          EOF
           find . -type f -name '*.cs3' -exec cp {} dist/ \;
           test -s dist/plugins.json
+          test -s dist/repo.json
           ls -lah dist
       - name: Publish to builds branch
         uses: peaceiris/actions-gh-pages@v4
