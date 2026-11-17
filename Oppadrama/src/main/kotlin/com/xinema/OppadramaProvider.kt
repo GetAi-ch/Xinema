@@ -6,9 +6,8 @@ import org.jsoup.nodes.Element
 class OppadramaProvider : MainAPI() {
  override var mainUrl = "https://oppa.biz"
  override var name = "Oppadrama"
- override val lang = "id"
+ override var lang = "id"
  override val hasMainPage = true
- override val hasSearch = true
  override val hasQuickSearch = false
  override val supportedTypes = setOf(TvType.AsianDrama, TvType.TvSeries, TvType.Movie)
 
@@ -30,7 +29,9 @@ class OppadramaProvider : MainAPI() {
   val doc = app.get(url).document
   val title = doc.selectFirst("h1.entry-title")?.text() ?: throw ErrorLoadingException("Judul tidak ditemukan")
   val poster = doc.selectFirst("div.bigcontent img")?.let { it.attr("data-src").ifBlank { it.attr("src") } }
-  val episodes = doc.select("div.eplister ul li a").map { newEpisode(it.attr("href"), it.text()) }.reversed()
+  val episodes = doc.select("div.eplister ul li a").map {
+   newEpisode(it.attr("href")) { name = it.text() }
+  }.reversed()
   val plot = doc.selectFirst("div.entry-content")?.text()
   val type = if (episodes.size > 1) TvType.TvSeries else TvType.Movie
   return newTvSeriesLoadResponse(title, url, type, episodes) {
