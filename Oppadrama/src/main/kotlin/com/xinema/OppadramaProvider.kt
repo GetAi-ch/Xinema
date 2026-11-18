@@ -245,7 +245,7 @@ class OppadramaProvider : MainAPI() {
                     embed.contains("byse", true) || embed.contains("bysesukior", true) ->
                         extractByse(embed, subtitleCallback) { link -> callback(link); emitted++ }
                     embed.contains("upns", true) || embed.contains("strp2p", true) || embed.contains("p2pstream", true) ->
-                        extractUpns(embed) { link -> callback(link); emitted++ }
+                        extractUpns(embed, subtitleCallback) { link -> callback(link); emitted++ }
                     embed.contains("abyssplayer", true) || embed.contains("hydrax", true) ||
                         embed.contains("abyss.to", true) || embed.contains("playhydrax", true) ->
                         extractAbyss(embed, data, subtitleCallback) { link -> callback(link); emitted++ }
