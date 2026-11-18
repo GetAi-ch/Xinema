@@ -21,6 +21,17 @@ class OppadramaProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     )
 
+    override val mainPage = mainPageOf(
+        "series/?status=&type=&order=update" to "Update Terbaru",
+        "series/?country%5B%5D=japan&type=Movie&order=update" to "Film Jepang",
+        "series/?country%5B%5D=thailand&status=&type=Movie&order=update" to "Film Thailand",
+        "series/?country%5B%5D=united-states&status=&type=Movie&order=update" to "Film Barat",
+        "series/?country%5B%5D=south-korea&status=&type=Movie&order=update" to "Film Korea",
+        "series/?country%5B%5D=south-korea&status=&type=Drama&order=update" to "Series Korea",
+        "series/?country%5B%5D=japan&type=Drama&order=update" to "Series Jepang",
+        "series/?country%5B%5D=usa&type=Drama&order=update" to "Series Barat"
+    )
+
     private fun Element.imageUrl(): String? {
         val image = selectFirst("img") ?: return null
         val value = image.attr("data-src")
@@ -55,12 +66,12 @@ class OppadramaProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = app.get(
-            "$mainUrl/series/?page=$page",
-            referer = "$mainUrl/",
-            headers = requestHeaders
-        ).document
-        return newHomePageResponse(request.name, parseListing(doc))
+        val route = request.data.trimStart('/')
+        val separator = if (route.contains("?")) "&" else "?"
+        val url = "$mainUrl/$route${separator}page=$page"
+        val doc = app.get(url, referer = "$mainUrl/", headers = requestHeaders).document
+        val items = parseListing(doc)
+        return newHomePageResponse(HomePageList(request.name, items), hasNext = items.isNotEmpty())
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
