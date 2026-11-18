@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.net.URI
 
 class OppadramaProvider : MainAPI() {
     override var mainUrl = "https://oppa.biz"
@@ -49,18 +50,18 @@ class OppadramaProvider : MainAPI() {
         "series/?genre%5B0%5D=animation&type=&order=update" to "Animasi"
     )
 
-    private fun Element.imageUrl(): String? {
+    private fun resolveUrl(value: String, base: String): String =\n        runCatching { URI(base).resolve(value).toString() }.getOrDefault(fixUrl(value))\n\n    private fun Element.imageUrl(base: String): String? {
         val image = selectFirst("img") ?: return null
         val value = image.attr("data-src")
             .ifBlank { image.attr("data-lazy-src") }
             .ifBlank { image.attr("abs:srcset").substringBefore(" ") }
             .ifBlank { image.attr("src") }
-        return value.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+        return value.takeIf { it.isNotBlank() }?.let { resolveUrl(it, base) }
     }
 
-    private fun Element.toResult(): SearchResponse? {
+    private fun Element.toResult(base: String): SearchResponse? {
         val anchor = if (tagName() == "a") this else selectFirst("a[href]") ?: return null
-        val href = fixUrl(anchor.attr("href"))
+        val href = resolveUrl(anchor.attr("href"), base)
         if (href.isBlank()) return null
         val title = anchor.attr("title").ifBlank {
             selectFirst("div.tt, .tt, h2, h3, img[alt]")?.let {
@@ -68,7 +69,7 @@ class OppadramaProvider : MainAPI() {
             }.orEmpty()
         }.ifBlank { anchor.text().trim() }
         if (title.isBlank()) return null
-        val poster = imageUrl()
+        val poster = imageUrl(base)
         return if (href.contains("/series/", true) || href.contains("drama", true)) {
             newTvSeriesSearchResponse(title, href, TvType.TvSeries) { posterUrl = poster }
         } else {
@@ -78,7 +79,7 @@ class OppadramaProvider : MainAPI() {
 
     private fun parseListing(doc: org.jsoup.nodes.Document): List<SearchResponse> {
         return doc.select("div.listupd article.bs, article.bs, div.bsx > a[href], div.bsx a[href]")
-            .mapNotNull { runCatching { it.toResult() }.getOrNull() }
+            .mapNotNull { runCatching { it.toResult(doc.location().ifBlank { mainUrl }) }.getOrNull() }
             .distinctBy { it.url }
     }
 
@@ -112,11 +113,11 @@ class OppadramaProvider : MainAPI() {
             val value = image.attr("data-src")
                 .ifBlank { image.attr("data-lazy-src") }
                 .ifBlank { image.attr("src") }
-            value.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+            value.takeIf { it.isNotBlank() }?.let { resolveUrl(it, doc.location().ifBlank { mainUrl }) }
         }
         val episodes = doc.select("div.eplister ul li a[href]").mapNotNull { anchor ->
             val href = anchor.attr("href")
-            if (href.isBlank()) null else newEpisode(fixUrl(href)) {
+            if (href.isBlank()) null else newEpisode(resolveUrl(href, doc.location().ifBlank { mainUrl })) {
                 name = anchor.text().trim().ifBlank { "Episode" }
             }
         }.reversed()
@@ -148,7 +149,7 @@ class OppadramaProvider : MainAPI() {
             .ifBlank { attr("data-src") }
             .ifBlank { attr("src") }
             .takeIf { it.isNotBlank() }
-            ?.let { fixUrl(it) }
+            ?.let { resolveUrl(it, doc.location().ifBlank { mainUrl }) }
     }
 
     override suspend fun loadLinks(
@@ -179,7 +180,7 @@ class OppadramaProvider : MainAPI() {
 
         doc.select("div.dlbox li span.e a[href]").forEach { anchor ->
             val href = anchor.attr("href")
-            if (href.isNotBlank()) iframeUrls.add(fixUrl(href))
+            if (href.isNotBlank()) iframeUrls.add(resolveUrl(href, doc.location().ifBlank { mainUrl }))
         }
 
         iframeUrls.forEach { iframe ->
