@@ -232,16 +232,34 @@ class OppadramaProvider : MainAPI() {
             frame.frameUrl(base)?.let(embeds::add)
         }
 
-        // Beberapa halaman menaruh link server di kotak download.
-        doc.select(".dlbox li a[href], .download a[href]").forEach { anchor ->
-            val href = resolveUrl(anchor.attr("href"), base)
-            if (href.startsWith("http")) embeds.add(href)
+        // Link server yang disimpan pada atribut lazy-load dan tombol mirror.
+        doc.select(".dlbox li a[href], .download a[href], [data-url], [data-embed], [data-src], [data-lazy-src]").forEach { element ->
+            listOf("href", "data-url", "data-embed", "data-src", "data-lazy-src").forEach { attr ->
+                val raw = element.attr(attr).trim()
+                if (raw.isNotBlank()) {
+                    val href = resolveUrl(raw, base)
+                    if (href.startsWith("http")) embeds.add(href)
+                }
+            }
         }
+
+        // Beberapa tema menyimpan URL embed sebagai string di script JSON/JavaScript.
+        val htmlText = response.text.replace("\\\\/", "/").replace("&amp;", "&")
+        Regex("""(?i)(?:embedUrl|iframe|src|url)\\s*["']?\\s*[:=]\\s*["'](https?://[^"'\\s<>]+)["']""")
+            .findAll(htmlText).forEach { match ->
+                match.groupValues.getOrNull(1)?.let { embeds.add(it.trimEnd('\\', ')', ']', ',')) }
+            }
 
         var emitted = 0
         for (embed in embeds) {
             runCatching {
                 when {
+                    embed.contains("kotakajaib.me", true) -> {
+                        if (extractKotakAjaib(embed, data, subtitleCallback) { link ->
+                                callback(link)
+                                emitted++
+                            }) Unit
+                    }
                     embed.contains("byse", true) || embed.contains("bysesukior", true) ->
                         extractByse(embed, subtitleCallback) { link -> callback(link); emitted++ }
                     embed.contains("upns", true) || embed.contains("strp2p", true) || embed.contains("p2pstream", true) ->
@@ -257,6 +275,75 @@ class OppadramaProvider : MainAPI() {
             }
         }
         return emitted > 0
+    }
+
+    // KotakAjaib memakai token per-embed dan endpoint source per provider.
+    // Referensi implementasi: provider PusatFilm pada ExtremeBoyGG/nonton-indo.
+    private suspend fun extractKotakAjaib(
+        url: String,
+        refererUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val share = Regex("""kotakajaib\\.me/(?:embed|file)/([A-Za-z0-9_-]+)""")
+                .find(url)?.groupValues?.getOrNull(1) ?: return false
+            val embedUrl = "https://kotakajaib.me/embed/$share"
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+                "Referer" to refererUrl
+            )
+            val embedDoc = app.get(embedUrl, headers = headers).document
+            val player = embedDoc.selectFirst("#kp") ?: return false
+            val token = player.attr("data-token").ifBlank { return false }
+            val providers = player.select("button[data-p]")
+                .map { it.attr("data-p").trim() }
+                .filter { it.isNotBlank() && !it.contains("vikingfile", true) }
+                .distinct()
+                .sortedWith(
+                    compareByDescending<String> { it.contains("hydrax", true) || it.contains("abyss", true) }
+                        .thenByDescending { it.contains("gdriveplayer", true) }
+                )
+                .ifEmpty { listOf("hydrax", "gdriveplayer") }
+
+            var found = 0
+            for (provider in providers) {
+                try {
+                    val encodedToken = URLEncoder.encode(token, "UTF-8")
+                    val sourceUrl = "https://kotakajaib.me/embed/$share/source/$provider?t=$encodedToken"
+                    val sourceText = app.get(
+                        sourceUrl,
+                        headers = headers + mapOf(
+                            "Referer" to embedUrl,
+                            "X-Requested-With" to "XMLHttpRequest"
+                        )
+                    ).text
+                    val target = JSONObject(sourceText).optString("u").trim()
+                    if (target.isBlank()) continue
+                    val targetUrl = if (target.startsWith("//")) "https:$target" else target
+                    val before = found
+                    when {
+                        targetUrl.contains("playhydrax.com", true) ||
+                            targetUrl.contains("abyssplayer.com", true) ||
+                            targetUrl.contains("abyss.to", true) ->
+                            if (extractAbyss(targetUrl, embedUrl, subtitleCallback) { link ->
+                                    callback(link)
+                                    found++
+                                }) Unit
+                        else -> loadExtractor(targetUrl, embedUrl, subtitleCallback) { link ->
+                            callback(link)
+                            found++
+                        }
+                    }
+                    if (found == before) continue
+                } catch (_: Exception) {
+                    // Try the next provider; one unavailable mirror must not stop extraction.
+                }
+            }
+            found > 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun extractSrcFromOption(valStr: String): String? {
