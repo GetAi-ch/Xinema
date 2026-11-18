@@ -320,6 +320,92 @@ class OppadramaProvider : MainAPI() {
         return emitted > 0
     }
 
+    // Vidara menyediakan streaming_url melalui endpoint JSON /api/stream.
+    private suspend fun extractVidara(
+        embedUrl: String,
+        refererUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val fileCode = Regex("""/[ev]/([A-Za-z0-9]+)""")
+                .find(embedUrl)?.groupValues?.getOrNull(1)
+                ?: embedUrl.substringAfterLast("/").substringBefore("?").takeIf {
+                    it.matches(Regex("""[A-Za-z0-9]+"""))
+                }
+                ?: return false
+
+            val pageText = app.get(
+                embedUrl,
+                headers = mapOf(
+                    "User-Agent" to requestHeaders["User-Agent"].orEmpty(),
+                    "Referer" to refererUrl
+                )
+            ).text
+            val mirrorOrigin = Regex("""MIRROR_ORIGIN\\s*=\\s*['"]([^'"]+)['"]""")
+                .find(pageText)?.groupValues?.getOrNull(1)
+            val parsedOrigin = runCatching {
+                val uri = URI(embedUrl)
+                "${uri.scheme}://${uri.host}"
+            }.getOrNull()
+            val origin = (mirrorOrigin ?: parsedOrigin ?: "https://vidara.to").trimEnd('/')
+            val apiResponse = app.post(
+                "$origin/api/stream",
+                headers = mapOf(
+                    "User-Agent" to requestHeaders["User-Agent"].orEmpty(),
+                    "Referer" to embedUrl,
+                    "Origin" to origin,
+                    "Accept" to "application/json, text/plain, */*",
+                    "Content-Type" to "application/json"
+                ),
+                json = JsonAsString(JSONObject()
+                    .put("filecode", fileCode)
+                    .put("device", "web")
+                    .toString())
+            ).text
+            val streamJson = JSONObject(apiResponse)
+            val streamUrl = streamJson.optString("streaming_url").trim()
+            if (!streamUrl.startsWith("http")) return false
+
+            val subtitles = streamJson.optJSONArray("subtitles")
+            if (subtitles != null) {
+                for (i in 0 until subtitles.length()) {
+                    val sub = subtitles.optJSONObject(i) ?: continue
+                    val subUrl = sub.optString("file_path").trim()
+                    val language = sub.optString("language").trim()
+                    if (subUrl.startsWith("http") && language.isNotBlank()) {
+                        subtitleCallback(newSubtitleFile(language, subUrl))
+                    }
+                }
+            }
+
+            val links = runCatching {
+                M3u8Helper.generateM3u8(
+                    "Vidara",
+                    streamUrl,
+                    "$origin/",
+                    headers = mapOf("Referer" to "$origin/")
+                )
+            }.getOrDefault(emptyList())
+            if (links.isNotEmpty()) {
+                links.forEach(callback)
+            } else {
+                callback(newExtractorLink(
+                    "Vidara",
+                    "Vidara HLS",
+                    streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$origin/"
+                    this.headers = mapOf("Referer" to "$origin/")
+                })
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     // KotakAjaib memakai token per-embed dan endpoint source per provider.
     // Referensi implementasi: provider PusatFilm pada ExtremeBoyGG/nonton-indo.
     private suspend fun extractKotakAjaib(
