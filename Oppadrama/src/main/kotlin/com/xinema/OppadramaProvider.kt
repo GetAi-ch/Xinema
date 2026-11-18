@@ -167,7 +167,13 @@ class OppadramaProvider : MainAPI() {
                 tags = doc.select(".genxed a, .genre a").map { it.text().trim() }
             }
         } else {
-            newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodes) {
+            val seriesEpisodes = episodes.ifEmpty {
+                listOf(newEpisode(url) {
+                    name = title
+                    episode = 1
+                })
+            }
+            newTvSeriesLoadResponse(title, url, TvType.AsianDrama, seriesEpisodes) {
                 posterUrl = poster
                 this.plot = plot
                 tags = doc.select(".genxed a, .genre a").map { it.text().trim() }
