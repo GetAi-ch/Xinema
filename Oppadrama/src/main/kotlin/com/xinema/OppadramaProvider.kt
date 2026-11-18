@@ -210,68 +210,111 @@ class OppadramaProvider : MainAPI() {
         val base = pageBase(doc, data)
         val embeds = linkedSetOf<String>()
 
-        // Mirror Base64: format HTML iframe, URL langsung, atau iframe yang atributnya lazy.
-        doc.select("select.mirror option[value], select[name=mirror] option[value]").forEach { option ->
-            val encoded = option.attr("value")
-            if (encoded.isBlank()) return@forEach
-            val decoded = decodeMirror(encoded) ?: return@forEach
+        fun addCandidate(rawValue: String?) {
+            val raw = rawValue?.trim()?.trim('"', '\'', ' ', ';') ?: return
+            if (raw.isBlank() || raw.startsWith("javascript:", true) ||
+                raw.startsWith("data:", true) || raw == "#") return
+            val normalized = resolveUrl(raw.replace("\\/", "/").replace("&amp;", "&"), base)
+            if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+                embeds.add(normalized)
+            }
+        }
+
+        // Mirror selector: nilai dapat berupa URL langsung, Base64, atau HTML iframe.
+        doc.select("select.mirror option[value], select[name*=mirror] option[value], select#server option[value]").forEach { option ->
+            val value = option.attr("value").trim()
+            addCandidate(value)
+            val decoded = decodeMirror(value) ?: return@forEach
             val decodedDoc = Jsoup.parse(decoded, base)
-            decodedDoc.select("iframe, frame").forEach { frame ->
-                frame.frameUrl(base)?.let(embeds::add)
-            }
-            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
-                val candidate = it.value.trimEnd(')', ']', ',')
-                if (candidate.contains("://")) embeds.add(candidate)
-            }
-        }
-
-        // Pemutar utama dan variasi markup yang digunakan tema Oppadrama.
-        doc.select(
-            ".player-embed iframe, #pembed iframe, .mvelement iframe, .megavid iframe, iframe"
-        ).forEach { frame ->
-            frame.frameUrl(base)?.let(embeds::add)
-        }
-
-        // Link server yang disimpan pada atribut lazy-load dan tombol mirror.
-        doc.select(".dlbox li a[href], .download a[href], [data-url], [data-embed], [data-src], [data-lazy-src]").forEach { element ->
-            listOf("href", "data-url", "data-embed", "data-src", "data-lazy-src").forEach { attr ->
-                val raw = element.attr(attr).trim()
-                if (raw.isNotBlank()) {
-                    val href = resolveUrl(raw, base)
-                    if (href.startsWith("http")) embeds.add(href)
+            decodedDoc.select("iframe, frame, embed, video source, source[src]").forEach { node ->
+                listOf("src", "data-src", "data-litespeed-src", "data-lazy-src").forEach { attr ->
+                    addCandidate(node.attr(attr))
                 }
             }
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
+                addCandidate(it.value.trimEnd(')', ']', ',', ';'))
+            }
+            Regex("""(?:src|url)\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                .findAll(decoded).forEach { addCandidate(it.groupValues[1]) }
         }
 
-        // Beberapa tema menyimpan URL embed sebagai string di script JSON/JavaScript.
-        val htmlText = response.text.replace("\\\\/", "/").replace("&amp;", "&")
-        Regex("""(?i)(?:embedUrl|iframe|src|url)\\s*["']?\\s*[:=]\\s*["'](https?://[^"'\\s<>]+)["']""")
-            .findAll(htmlText).forEach { match ->
-                match.groupValues.getOrNull(1)?.let { embeds.add(it.trimEnd('\\', ')', ']', ',')) }
+        // Semua elemen pemutar, termasuk lazy iframe dan source video.
+        doc.select("iframe, frame, embed, video, video source, source[src], object[data]").forEach { node ->
+            listOf(
+                "src", "data-src", "data-litespeed-src", "data-lazy-src",
+                "data-embed", "data-url", "data", "data-original"
+            ).forEach { attr -> addCandidate(node.attr(attr)) }
+        }
+
+        // Tombol/mirror server yang menyimpan URL pada atribut data-*.
+        doc.select(
+            ".player, .player-embed, #pembed, #player, #server, .server, .servers, " +
+                ".episodelink, .mirror, .download, .dlbox, [data-embed], [data-url]"
+        ).forEach { element ->
+            listOf("href", "src", "data-src", "data-embed", "data-url", "data-link", "data-href")
+                .forEach { attr -> addCandidate(element.attr(attr)) }
+            element.select("[href], [src], [data-src], [data-embed], [data-url], [data-link]").forEach { child ->
+                listOf("href", "src", "data-src", "data-embed", "data-url", "data-link")
+                    .forEach { attr -> addCandidate(child.attr(attr)) }
             }
+        }
+
+        // Link server eksplisit, tidak mengambil semua link navigasi situs.
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href")
+            if (Regex("""(?i)(/e/|/embed/|/file/|player|stream|video|watch|kotakajaib|byse|upns|hydra|m3u8|\.mp4)""")
+                    .containsMatchIn(href)) addCandidate(href)
+        }
+
+        // URL yang tertanam di JSON/JavaScript. Normalisasi slash yang di-escape dahulu.
+        val htmlText = response.text
+            .replace("\\\\/", "/")
+            .replace("\\/", "/")
+            .replace("&amp;", "&")
+        val scriptPatterns = listOf(
+            Regex("""(?i)["'](?:embedUrl|iframe|src|file|url|link)["']\s*:\s*["']([^"']+)["']"""),
+            Regex("""(?i)\b(?:embedUrl|iframe|src|file|url|link)\s*=\s*["']([^"']+)["']"""),
+            Regex("""(?i)<iframe[^>]+(?:src|data-src)=["']([^"']+)["']""")
+        )
+        scriptPatterns.forEach { pattern ->
+            pattern.findAll(htmlText).forEach { match ->
+                match.groupValues.getOrNull(1)?.let(::addCandidate)
+            }
+        }
 
         var emitted = 0
         for (embed in embeds) {
-            runCatching {
+            try {
                 when {
-                    embed.contains("kotakajaib.me", true) -> {
-                        if (extractKotakAjaib(embed, data, subtitleCallback) { link ->
-                                callback(link)
-                                emitted++
-                            }) Unit
-                    }
+                    embed.contains("kotakajaib.me", true) ->
+                        extractKotakAjaib(embed, data, subtitleCallback) { link ->
+                            callback(link)
+                            emitted++
+                        }
                     embed.contains("byse", true) || embed.contains("bysesukior", true) ->
-                        extractByse(embed, subtitleCallback) { link -> callback(link); emitted++ }
-                    embed.contains("upns", true) || embed.contains("strp2p", true) || embed.contains("p2pstream", true) ->
-                        extractUpns(embed, subtitleCallback) { link -> callback(link); emitted++ }
+                        extractByse(embed, subtitleCallback) { link ->
+                            callback(link)
+                            emitted++
+                        }
+                    embed.contains("upns", true) || embed.contains("strp2p", true) ||
+                        embed.contains("p2pstream", true) ->
+                        extractUpns(embed, subtitleCallback) { link ->
+                            callback(link)
+                            emitted++
+                        }
                     embed.contains("abyssplayer", true) || embed.contains("hydrax", true) ||
                         embed.contains("abyss.to", true) || embed.contains("playhydrax", true) ->
-                        extractAbyss(embed, data, subtitleCallback) { link -> callback(link); emitted++ }
+                        extractAbyss(embed, data, subtitleCallback) { link ->
+                            callback(link)
+                            emitted++
+                        }
                     else -> loadExtractor(embed, data, subtitleCallback) { link ->
                         callback(link)
                         emitted++
                     }
                 }
+            } catch (_: Exception) {
+                // Satu mirror yang gagal tidak boleh menghentikan mirror berikutnya.
             }
         }
         return emitted > 0
@@ -286,7 +329,7 @@ class OppadramaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val share = Regex("""kotakajaib\\.me/(?:embed|file)/([A-Za-z0-9_-]+)""")
+            val share = Regex("""kotakajaib\.me/(?:embed|file)/([A-Za-z0-9_-]+)""")
                 .find(url)?.groupValues?.getOrNull(1) ?: return false
             val embedUrl = "https://kotakajaib.me/embed/$share"
             val headers = mapOf(
@@ -300,11 +343,7 @@ class OppadramaProvider : MainAPI() {
                 .map { it.attr("data-p").trim() }
                 .filter { it.isNotBlank() && !it.contains("vikingfile", true) }
                 .distinct()
-                .sortedWith(
-                    compareByDescending<String> { it.contains("hydrax", true) || it.contains("abyss", true) }
-                        .thenByDescending { it.contains("gdriveplayer", true) }
-                )
-                .ifEmpty { listOf("hydrax", "gdriveplayer") }
+                .distinct()
 
             var found = 0
             for (provider in providers) {
