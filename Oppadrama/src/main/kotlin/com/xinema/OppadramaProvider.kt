@@ -124,8 +124,7 @@ class OppadramaProvider : MainAPI() {
                 name = anchor.text().trim().ifBlank { "Episode" }
             }
         }.reversed()
-        val plot = doc.select("div.entry-content p").joinToString("
-") { it.text() }.trim()
+        val plot = doc.select("div.entry-content p").joinToString("\n") { it.text() }.trim()
             .ifBlank { doc.selectFirst("div.entry-content")?.text().orEmpty() }
         val contentType = doc.selectFirst("span:matchesOwn(Tipe:)")?.ownText().orEmpty()
         val isSeries = url.contains("/series/", true) ||
@@ -148,12 +147,12 @@ class OppadramaProvider : MainAPI() {
         }
     }
 
-    private fun Element.iframeUrl(): String? {
+    private fun Element.iframeUrl(base: String): String? {
         return attr("data-litespeed-src")
             .ifBlank { attr("data-src") }
             .ifBlank { attr("src") }
             .takeIf { it.isNotBlank() }
-            ?.let { resolveUrl(it, doc.location().ifBlank { mainUrl }) }
+            ?.let { resolveUrl(it, base) }
     }
 
     override suspend fun loadLinks(
@@ -166,7 +165,7 @@ class OppadramaProvider : MainAPI() {
         val iframeUrls = linkedSetOf<String>()
 
         doc.select("#pembed iframe, div.player-embed iframe").forEach { frame ->
-            frame.iframeUrl()?.let { iframeUrls.add(it) }
+            frame.iframeUrl(doc.location().ifBlank { mainUrl })?.let { iframeUrls.add(it) }
         }
 
         doc.select("select.mirror option[value]:not([disabled])").forEach { option ->
@@ -178,7 +177,7 @@ class OppadramaProvider : MainAPI() {
                     Charsets.UTF_8
                 )
                 val frame = Jsoup.parse(decoded).selectFirst("iframe")
-                frame?.iframeUrl()?.let { iframeUrls.add(it) }
+                frame?.iframeUrl(doc.location().ifBlank { mainUrl })?.let { iframeUrls.add(it) }
             }
         }
 
