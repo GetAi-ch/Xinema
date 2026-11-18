@@ -50,7 +50,10 @@ class OppadramaProvider : MainAPI() {
         "series/?genre%5B0%5D=animation&type=&order=update" to "Animasi"
     )
 
-    private fun resolveUrl(value: String, base: String): String =\n        runCatching { URI(base).resolve(value).toString() }.getOrDefault(fixUrl(value))\n\n    private fun Element.imageUrl(base: String): String? {
+    private fun resolveUrl(value: String, base: String): String =
+        runCatching { URI(base).resolve(value).toString() }.getOrDefault(fixUrl(value))
+
+    private fun Element.imageUrl(base: String): String? {
         val image = selectFirst("img") ?: return null
         val value = image.attr("data-src")
             .ifBlank { image.attr("data-lazy-src") }
@@ -121,7 +124,8 @@ class OppadramaProvider : MainAPI() {
                 name = anchor.text().trim().ifBlank { "Episode" }
             }
         }.reversed()
-        val plot = doc.select("div.entry-content p").joinToString("\n") { it.text() }.trim()
+        val plot = doc.select("div.entry-content p").joinToString("
+") { it.text() }.trim()
             .ifBlank { doc.selectFirst("div.entry-content")?.text().orEmpty() }
         val contentType = doc.selectFirst("span:matchesOwn(Tipe:)")?.ownText().orEmpty()
         val isSeries = url.contains("/series/", true) ||
