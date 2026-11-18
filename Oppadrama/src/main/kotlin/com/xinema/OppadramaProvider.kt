@@ -23,13 +23,30 @@ class OppadramaProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "series/?status=&type=&order=update" to "Update Terbaru",
-        "series/?country%5B%5D=japan&type=Movie&order=update" to "Film Jepang",
-        "series/?country%5B%5D=thailand&status=&type=Movie&order=update" to "Film Thailand",
-        "series/?country%5B%5D=united-states&status=&type=Movie&order=update" to "Film Barat",
+        "series/?status=Ongoing&type=&order=update" to "Ongoing",
+        "series/?type=TV+Show&order=update" to "Variety Show",
+
+        "series/?country%5B%5D=south-korea&status=&type=Drama&order=update" to "Drama Korea",
+        "series/?country%5B%5D=china&type=Drama&order=update" to "Drama China",
+        "series/?country%5B%5D=thailand&status=&type=Drama&order=update" to "Drama Thailand",
+        "series/?country%5B%5D=japan&type=Drama&order=update" to "Drama Jepang",
+        "series/?country%5B%5D=taiwan&status=&type=Drama&order=update" to "Drama Taiwan",
+        "series/?country%5B%5D=philippines&type=Drama&order=update" to "Drama Filipina",
+        "series/?country%5B%5D=usa&type=Drama&order=update" to "Drama Barat",
+        "network/netflix/" to "Netflix",
+        "series/?status=Completed&type=Drama&order=update" to "Completed",
+
         "series/?country%5B%5D=south-korea&status=&type=Movie&order=update" to "Film Korea",
-        "series/?country%5B%5D=south-korea&status=&type=Drama&order=update" to "Series Korea",
-        "series/?country%5B%5D=japan&type=Drama&order=update" to "Series Jepang",
-        "series/?country%5B%5D=usa&type=Drama&order=update" to "Series Barat"
+        "series/?country%5B%5D=china&type=Movie&order=update" to "Film China",
+        "series/?country%5B%5D=hong-kong&type=Movie&order=update" to "Film Hong Kong",
+        "series/?country%5B%5D=thailand&status=&type=Movie&order=update" to "Film Thailand",
+        "series/?country%5B%5D=japan&type=Movie&order=update" to "Film Jepang",
+        "series/?country%5B%5D=taiwan&status=&type=Movie&order=update" to "Film Taiwan",
+        "series/?country%5B%5D=philippines&type=Movie&order=update" to "Film Filipina",
+        "series/?country%5B%5D=india&status=&type=Movie&order=update" to "Film India",
+        "series/?country%5B%5D=united-states&status=&type=Movie&order=update" to "Film Barat",
+
+        "series/?genre%5B0%5D=animation&type=&order=update" to "Animasi"
     )
 
     private fun Element.imageUrl(): String? {
@@ -67,6 +84,8 @@ class OppadramaProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val route = request.data.trimStart('/')
+            .replace(Regex("([?&])page=[^&]*"), "")
+            .trimEnd('&', '?')
         val separator = if (route.contains("?")) "&" else "?"
         val url = "$mainUrl/$route${separator}page=$page"
         val doc = app.get(url, referer = "$mainUrl/", headers = requestHeaders).document
