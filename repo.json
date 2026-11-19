@@ -1,0 +1,8 @@
+{
+  "name": "Xinema",
+  "description": "Xinema CloudStream Repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/GetAi-ch/Xinema/builds/plugins.json"
+  ]
+}

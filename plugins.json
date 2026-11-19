@@ -1,0 +1,44 @@
+[
+    {
+        "url": "https://raw.githubusercontent.com/GetAi-ch/Xinema/builds/Oploverz.cs3",
+        "status": 1,
+        "version": 2,
+        "name": "Oploverz",
+        "internalName": "Oploverz",
+        "authors": [
+            "GetAi-ch"
+        ],
+        "description": "Oploverz provider untuk Xinema",
+        "fileSize": 32488,
+        "repositoryUrl": "https://github.com/GetAi-ch/Xinema",
+        "language": "id",
+        "tvTypes": [
+            "AnimeMovie",
+            "Anime",
+            "OVA"
+        ],
+        "apiVersion": 1,
+        "fileHash": "sha256-a730224e791566890100afdcefd4960c27dacb243e9e5b720241a210bbbb08c5"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/GetAi-ch/Xinema/builds/Oppadrama.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "Oppadrama",
+        "internalName": "Oppadrama",
+        "authors": [
+            "GetAi-ch"
+        ],
+        "description": "Oppadrama provider untuk Xinema",
+        "fileSize": 47845,
+        "repositoryUrl": "https://github.com/GetAi-ch/Xinema",
+        "language": "id",
+        "tvTypes": [
+            "AsianDrama",
+            "TvSeries",
+            "Movie"
+        ],
+        "apiVersion": 1,
+        "fileHash": "sha256-48f0a2098ede5d25202f7c23a215a713770dc400df2b8eb0fbf8b6563c537b44"
+    }
+]
