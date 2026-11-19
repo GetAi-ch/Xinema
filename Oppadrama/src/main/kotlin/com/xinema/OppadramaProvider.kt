@@ -205,7 +205,13 @@ class OppadramaProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val response = app.get(data, referer = "$mainUrl/", headers = requestHeaders)
+        // Episode URLs may resolve to an alternate official/serving host (for example v2.*).
+        // Use that episode host as the request referer instead of forcing the configured homepage.
+        val episodeOrigin = runCatching {
+            val uri = URI(data)
+            "${uri.scheme}://${uri.host}/"
+        }.getOrDefault("$mainUrl/")
+        val response = app.get(data, referer = episodeOrigin, headers = requestHeaders)
         val doc = response.document
         val base = pageBase(doc, data)
         val embeds = linkedSetOf<String>()
