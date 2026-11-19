@@ -15,7 +15,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class OppadramaProvider : MainAPI() {
-    override var mainUrl = "https://oppadrama.io"
+    override var mainUrl = "https://oppa.biz"
     override var name = "Oppadrama"
     override var lang = "id"
     override val hasMainPage = true
