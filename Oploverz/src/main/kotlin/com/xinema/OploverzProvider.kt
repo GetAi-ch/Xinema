@@ -10,7 +10,7 @@ import java.net.URI
 import java.net.URLEncoder
 
 class OploverzProvider : MainAPI() {
-    override var mainUrl = "https://oploverz.mov"
+    override var mainUrl = "https://oploverz.diy"
     override var name = "Oploverz"
     override var lang = "id"
     override val hasMainPage = true
