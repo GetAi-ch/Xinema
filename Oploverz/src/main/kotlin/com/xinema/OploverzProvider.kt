@@ -148,32 +148,47 @@ class OploverzProvider : MainAPI() {
         data: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val body = app.get(iframeUrl, referer = data, headers = requestHeaders).text
-        val jsonText = Regex("""(?s)(\\{.*?"streams"\\s*:\\s*\\[.*?\\].*?\\})""")
-            .find(body)?.groupValues?.get(1) ?: return false
-        val streams = runCatching { JSONObject(jsonText).optJSONArray("streams") }.getOrNull()
-            ?: return false
-        var found = false
-        for (index in 0 until streams.length()) {
-            val stream = streams.optJSONObject(index) ?: continue
-            val videoUrl = stream.optString("play_url").takeIf(String::isNotBlank) ?: continue
-            val formatId = stream.optString("format_id")
-            val quality = when (formatId) {
-                "18" -> Qualities.P360.value
-                "22" -> Qualities.P720.value
-                else -> Qualities.Unknown.value
+        return try {
+            val body = app.get(iframeUrl, referer = data, headers = requestHeaders).text
+            var found = false
+            val scripts = Jsoup.parse(body).select("script")
+            for (script in scripts) {
+                val scriptText = script.data().ifBlank { script.html() }
+                val marker = Regex(""""streams"\s*:\s*\[""", RegexOption.IGNORE_CASE).find(scriptText)
+                    ?: continue
+                val arrayStart = marker.range.last + 1
+                val arrayEnd = scriptText.indexOf(']', arrayStart)
+                if (arrayEnd <= arrayStart) continue
+                val arrayText = scriptText.substring(arrayStart, arrayEnd)
+                val streams = runCatching {
+                    JSONObject("""{"streams":[$arrayText]}""").optJSONArray("streams")
+                }.getOrNull() ?: continue
+                for (index in 0 until streams.length()) {
+                    val source = streams.optJSONObject(index) ?: continue
+                    val videoUrl = source.optString("play_url").trim()
+                    if (!videoUrl.startsWith("http")) continue
+                    val formatId = source.optInt("format_id", -1)
+                    val quality = when (formatId) {
+                        18 -> Qualities.P360.value
+                        22 -> Qualities.P720.value
+                        else -> Qualities.Unknown.value
+                    }
+                    callback(newExtractorLink(
+                        name,
+                        if (quality == Qualities.Unknown.value) "Blogger" else "Blogger " + quality.toString() + "p",
+                        videoUrl
+                    ) {
+                        this.quality = quality
+                        this.referer = "https://www.youtube.com/"
+                    })
+                    found = true
+                }
+                if (found) break
             }
-            callback(newExtractorLink(
-                name,
-                if (quality == Qualities.Unknown.value) name else "$name ${if (formatId == "18") "360p" else "720p"}",
-                videoUrl
-            ) {
-                this.quality = quality
-                referer = iframeUrl
-            })
-            found = true
+            found
+        } catch (_: Exception) {
+            false
         }
-        return found
     }
 
     private suspend fun handlePlayerUrl(
@@ -181,14 +196,60 @@ class OploverzProvider : MainAPI() {
         data: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ) {
-        if (!url.startsWith("http")) return
-        if (url.contains("blogger", true)) {
-            val parsed = runCatching { extractBloggerStreams(url, data, callback) }.getOrDefault(false)
-            if (!parsed) loadExtractor(url, data, subtitleCallback, callback)
-        } else {
-            loadExtractor(url, data, subtitleCallback, callback)
+    ): Int {
+        if (!url.startsWith("http")) return 0
+        var emitted = 0
+        val emit: (ExtractorLink) -> Unit = { link ->
+            callback(link)
+            emitted++
         }
+        when {
+            url.contains("blogger.com", true) -> {
+                loadExtractor(url, data, subtitleCallback, emit)
+                if (emitted == 0) {
+                    runCatching { extractBloggerStreams(url, data, emit) }
+                }
+            }
+            url.contains("vkspeed.com", true) -> {
+                runCatching {
+                    val html = app.get(url, referer = data, headers = requestHeaders).text
+                    val unpacked = getPacked(html) ?: html
+                    Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""")
+                        .findAll(unpacked).map { it.value.trimEnd(')', ']', ',') }.distinct().forEach { stream ->
+                            emit(newExtractorLink("VKSpeed", "VKSpeed MP4", stream, type = ExtractorLinkType.VIDEO) {
+                                this.referer = "https://vkspeed.com/"
+                            })
+                        }
+                    Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+                        .findAll(unpacked).map { it.value.trimEnd(')', ']', ',') }.distinct().forEach { stream ->
+                            emit(newExtractorLink("VKSpeed", "VKSpeed HLS", stream, type = ExtractorLinkType.M3U8) {
+                                this.referer = "https://vkspeed.com/"
+                            })
+                        }
+                }
+            }
+            url.contains("xtwap.top", true) -> {
+                runCatching {
+                    val html = app.get(url, referer = data, headers = requestHeaders).text
+                    Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+                        .findAll(html).map { it.value.trimEnd(')', ']', ',') }.distinct().forEach { stream ->
+                            emit(newExtractorLink("XTWAP", "XTWAP HLS", stream, type = ExtractorLinkType.M3U8) {
+                                this.referer = "https://play.xtwap.top/"
+                            })
+                        }
+                    val direct = Regex("""<source[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                        .find(html)?.groupValues?.getOrNull(1)
+                    if (!direct.isNullOrBlank()) {
+                        val stream = resolveUrl(direct, url)
+                        if (stream.startsWith("http")) emit(newExtractorLink("XTWAP", "XTWAP Video", stream, type = ExtractorLinkType.VIDEO) {
+                            this.referer = "https://play.xtwap.top/"
+                        })
+                    }
+                }
+            }
+            else -> runCatching { loadExtractor(url, data, subtitleCallback, emit) }
+        }
+        return emitted
     }
 
     override suspend fun loadLinks(
@@ -202,7 +263,31 @@ class OploverzProvider : MainAPI() {
         val base = doc.location().takeIf { it.startsWith("http") } ?: data
         val players = linkedSetOf<String>()
 
-        // Server dinamis yang memerlukan AJAX.
+        fun addPlayer(raw: String?) {
+            val value = raw?.trim()?.trim('"', '\'', ' ', ';') ?: return
+            if (value.isBlank() || value.startsWith("javascript:", true) ||
+                value.startsWith("data:", true) || value == "#") return
+            val normalized = resolveUrl(value.replace("\\/", "/").replace("&amp;", "&"), base)
+            if (normalized.startsWith("http://") || normalized.startsWith("https://")) players.add(normalized)
+        }
+
+        fun decodePlayerValue(value: String) {
+            addPlayer(value)
+            val decoded = decodeBase64(value) ?: return
+            val parsed = Jsoup.parse(decoded, base)
+            parsed.select("iframe, frame, embed, source, video").forEach { node ->
+                listOf("src", "data-src", "data-lazy-src", "data-litespeed-src", "data-url").forEach {
+                    addPlayer(node.attr(it))
+                }
+            }
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
+                addPlayer(it.value.trimEnd(')', ']', ',', ';'))
+            }
+            Regex("""(?:src|url)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .findAll(decoded).forEach { addPlayer(it.groupValues[1]) }
+        }
+
+        // AJAX player tabs (WordPress player_ajax / dsu-server patterns).
         doc.select("#server [data-post][data-nume], #server .east_player_option").forEach { server ->
             val post = server.attr("data-post")
             val nume = server.attr("data-nume")
@@ -216,64 +301,66 @@ class OploverzProvider : MainAPI() {
                         "nume" to nume,
                         "type" to server.attr("data-type")
                     ),
-                    headers = requestHeaders + ("X-Requested-With" to "XMLHttpRequest"),
+                    headers = requestHeaders + mapOf(
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
+                    ),
                     referer = data
                 )
             }.getOrNull() ?: return@forEach
-            val iframe = ajax.document.selectFirst("iframe[src], iframe[data-src]")
-                ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-                ?: Regex("""(?:src|data-src)=["']([^"']+)["']""")
-                    .find(ajax.text)?.groupValues?.getOrNull(1)
-            if (!iframe.isNullOrBlank()) players.add(resolveUrl(iframe, base))
-        }
-
-        // Tombol server alternatif dari tema Oploverz.
-        doc.select("button.dsu-server").forEach { button ->
-            button.attr("data-url").takeIf(String::isNotBlank)?.let {
-                players.add(resolveUrl(it, base))
-            }
-            button.attr("data-embed").takeIf(String::isNotBlank)?.let { encoded ->
-                val decoded = decodeBase64(encoded) ?: return@let
-                val parsed = Jsoup.parse(decoded, base)
-                parsed.select("iframe[src], iframe[data-src]").forEach { frame ->
-                    val src = frame.attr("src").ifBlank { frame.attr("data-src") }
-                    if (src.isNotBlank()) players.add(resolveUrl(src, base))
-                }
-                Regex("""https?://[^\\s"'<>]+""").findAll(decoded).forEach {
-                    players.add(it.value.trimEnd(')', ']', ','))
+            val ajaxDoc = ajax.document
+            ajaxDoc.select("iframe, frame, embed, source").forEach { frame ->
+                listOf("src", "data-src", "data-lazy-src", "data-litespeed-src").forEach {
+                    addPlayer(frame.attr(it))
                 }
             }
+            Regex("""(?:src|data-src)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .findAll(ajax.text).forEach { addPlayer(it.groupValues[1]) }
         }
 
-        // Iframe biasa dan mirror yang dienkode Base64.
-        doc.select(
-            "#pembed iframe, .player-embed iframe, .video-content iframe, iframe"
-        ).forEach { frame ->
-            val src = listOf("src", "data-src", "data-lazy-src")
-                .firstNotNullOfOrNull { frame.attr(it).takeIf(String::isNotBlank) }
-            if (src != null) players.add(resolveUrl(src, base))
+        // Theme server buttons and encoded embed values.
+        doc.select("button.dsu-server, [data-embed], [data-url]").forEach { button ->
+            addPlayer(button.attr("data-url"))
+            button.attr("data-embed").takeIf(String::isNotBlank)?.let(::decodePlayerValue)
         }
-        doc.select("select.mirror option[value], select[name=mirror] option[value]").forEach { option ->
-            val decoded = decodeBase64(option.attr("value")) ?: return@forEach
-            val parsed = Jsoup.parse(decoded, base)
-            parsed.select("iframe[src], iframe[data-src], frame[src]").forEach { frame ->
-                val src = frame.attr("src").ifBlank { frame.attr("data-src") }
-                if (src.isNotBlank()) players.add(resolveUrl(src, base))
-            }
-            Regex("""https?://[^\\s"'<>]+""").findAll(decoded).forEach {
-                players.add(it.value.trimEnd(')', ']', ','))
+
+        // Direct/lazy iframe and mirror options.
+        doc.select("iframe, frame, embed, video, video source, source[src]").forEach { frame ->
+            listOf("src", "data-src", "data-lazy-src", "data-litespeed-src", "data-url").forEach {
+                addPlayer(frame.attr(it))
             }
         }
-
-        // Link download langsung.
-        doc.select("a[href*=gofile.io], a.dsu-download[href]").forEach { anchor ->
-            val href = resolveUrl(anchor.attr("href"), base)
-            if (href.startsWith("http")) players.add(href)
+        doc.select("select.mirror option[value], select[name=mirror] option[value], select#server option[value]").forEach { option ->
+            decodePlayerValue(option.attr("value"))
         }
 
+        // Server links and download mirrors only; avoid collecting ordinary site navigation.
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href")
+            if (Regex("""(?i)(gofile\.io|/e/|/embed/|/file/|player|stream|video|watch|blogger|vkspeed|xtwap|\.m3u8|\.mp4)""")
+                    .containsMatchIn(href)) addPlayer(href)
+        }
+
+        // JSON and inline scripts can hold escaped iframe URLs not represented in the DOM.
+        val sourceText = response.text.replace("\\\\/", "/").replace("\\/", "/").replace("&amp;", "&")
+        val patterns = listOf(
+            Regex("""(?i)["'](?:embedUrl|iframe|src|file|url|link)["']\s*:\s*["']([^"']+)["']"""),
+            Regex("""(?i)\b(?:embedUrl|iframe|src|file|url|link)\s*=\s*["']([^"']+)["']"""),
+            Regex("""(?i)<iframe[^>]+(?:src|data-src)=["']([^"']+)["']""")
+        )
+        patterns.forEach { pattern ->
+            pattern.findAll(sourceText).forEach { match -> addPlayer(match.groupValues[1]) }
+        }
+
+        var emitted = 0
         for (player in players) {
-            runCatching { handlePlayerUrl(player, data, subtitleCallback, callback) }
+            emitted += runCatching {
+                handlePlayerUrl(player, data, subtitleCallback) { link ->
+                    callback(link)
+                }
+            }.getOrDefault(0)
         }
-        return players.isNotEmpty()
+        return emitted > 0
     }
+
 }
