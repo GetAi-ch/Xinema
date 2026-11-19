@@ -1,17 +1,26 @@
 name: Build Xinema plugins
+
 on:
   push:
-    branches: [main]
+    branches: [main, foundation-rebuild]
     paths-ignore: ["*.md"]
   workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: xinema-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
@@ -19,11 +28,34 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
       - name: Build CloudStream plugins
-        run: gradle make makePluginsJson
-      - name: Collect manifest and plugin packages
+        run: gradle clean make makePluginsJson
+      - name: Validate generated plugins
+        shell: bash
         run: |
+          set -euo pipefail
+          test -s build/plugins.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path('build/plugins.json').read_text())
+          packages = list(Path('.').glob('*/build/*.cs3'))
+          if not packages:
+              raise SystemExit('Build tidak menghasilkan file .cs3')
+          if not isinstance(manifest, list) or not manifest:
+              raise SystemExit('plugins.json kosong atau formatnya bukan array')
+          package_names = {p.stem for p in packages}
+          manifest_names = {item.get('internalName') for item in manifest if isinstance(item, dict)}
+          missing = package_names - manifest_names
+          if missing:
+              raise SystemExit(f'Plugin tidak tercantum di manifest: {sorted(missing)}')
+          print(f'Tervalidasi: {len(packages)} paket .cs3 dan {len(manifest)} entri manifest')
+          PY
+      - name: Prepare repository files
+        run: |
+          set -euo pipefail
           mkdir -p dist
           cp build/plugins.json dist/plugins.json
           cat > dist/repo.json <<'EOF'
@@ -36,11 +68,12 @@ jobs:
             ]
           }
           EOF
-          find . -type f -name '*.cs3' -exec cp {} dist/ \;
+          find . -path './.git' -prune -o -type f -path '*/build/*.cs3' -exec cp {} dist/ \;
           test -s dist/plugins.json
           test -s dist/repo.json
           ls -lah dist
-      - name: Publish to builds branch
+      - name: Publish stable repository
+        if: github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v4
         with:
           publish_branch: builds
