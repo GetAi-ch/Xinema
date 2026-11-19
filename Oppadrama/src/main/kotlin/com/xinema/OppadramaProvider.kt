@@ -286,6 +286,10 @@ class OppadramaProvider : MainAPI() {
         for (embed in embeds) {
             try {
                 when {
+                    embed.contains("vidara", true) -> extractVidara(embed, data, subtitleCallback) { link ->
+                        callback(link)
+                        emitted++
+                    }
                     embed.contains("kotakajaib.me", true) ->
                         extractKotakAjaib(embed, data, subtitleCallback) { link ->
                             callback(link)
@@ -684,7 +688,8 @@ class OppadramaProvider : MainAPI() {
                 )
             ).text
 
-            val enc = Regex("""const\s+datas\s*=\s*"([^"]*)"""").find(areq)?.groupValues?.getOrNull(1) ?: return false
+            val enc = Regex("""(?:const|var|let)\s+datas\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(areq)?.groupValues?.getOrNull(1) ?: return false
 
             extractAbyssSubtitles(enc, subtitleCallback)
 
@@ -704,6 +709,7 @@ class OppadramaProvider : MainAPI() {
             val result = decJson.optJSONObject("result") ?: return false
             val sources = result.optJSONArray("sources") ?: return false
 
+            var emitted = 0
             for (i in 0 until sources.length()) {
                 val srcObj = sources.optJSONObject(i) ?: continue
                 if (!srcObj.optBoolean("status", true)) continue
@@ -729,8 +735,9 @@ class OppadramaProvider : MainAPI() {
                         this.headers = mapOf("Referer" to "https://abyssplayer.com/")
                     }
                 )
+                emitted++
             }
-            true
+            emitted > 0
         } catch (_: Exception) {
             false
         }
