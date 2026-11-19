@@ -254,10 +254,10 @@ class OppadramaProvider : MainAPI() {
                     addCandidate(node.attr(attr))
                 }
             }
-            Regex("""https?://[^\\s"'<>]+""").findAll(decoded).forEach {
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
                 addCandidate(it.value.trimEnd(')', ']', ',', ';'))
             }
-            Regex("""(?:src|url|file)\\s*[:=]\\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+            Regex("""(?:src|url|file)\s*[:=]\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
                 .findAll(decoded).forEach { addCandidate(it.groupValues[1]) }
         }
 
@@ -528,7 +528,7 @@ class OppadramaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val domain = Regex("""https?://([^/]+)""").find(embedUrl)?.groupValues?.getOrNull(1) ?: return false
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
             val code = Regex("""/e/([a-zA-Z0-9_-]+)""").find(embedUrl)?.groupValues?.getOrNull(1) ?: return false
             val apiUrl = "https://$domain/api/videos/$code/"
 
@@ -627,7 +627,7 @@ class OppadramaProvider : MainAPI() {
             }
             if (hashId.isBlank()) return false
 
-            val domain = Regex("""https?://([^/]+)""").find(embedUrl)?.groupValues?.getOrNull(1) ?: return false
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
             val apiUrl = "https://$domain/api/v1/video?id=$hashId"
 
             val hexResp = app.get(
