@@ -15,7 +15,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class OppadramaProvider : MainAPI() {
-    override var mainUrl = "https://oppa.biz"
+    override var mainUrl = "https://v2.oppadrama.cc"
     override var name = "Oppadrama"
     override var lang = "id"
     override val hasMainPage = true
@@ -194,10 +194,20 @@ class OppadramaProvider : MainAPI() {
         return resolveUrl(raw, base).takeIf { it.startsWith("http") }
     }
 
-    private fun decodeMirror(value: String): String? = runCatching {
+    private fun decodeMirror(value: String): String? {
         val cleaned = value.trim().replace(Regex("\\s+"), "")
-        String(Base64.decode(cleaned, Base64.DEFAULT), Charsets.UTF_8)
-    }.getOrNull()?.takeIf(String::isNotBlank)
+        if (cleaned.isBlank()) return null
+        val decoded = runCatching {
+            String(Base64.decode(cleaned, Base64.DEFAULT), Charsets.UTF_8)
+        }.recoverCatching {
+            String(Base64.decode(cleaned, Base64.URL_SAFE), Charsets.UTF_8)
+        }.getOrNull()?.trim()
+        return decoded?.takeIf {
+            it.isNotBlank() && (it.contains("<iframe", true) ||
+                it.contains("<frame", true) || it.startsWith("http", true) ||
+                it.contains("src=", true) || it.contains("file:", true))
+        }
+    }
 
     override suspend fun loadLinks(
         data: String,
@@ -220,21 +230,34 @@ class OppadramaProvider : MainAPI() {
             }
         }
 
-        // Mirror selector: nilai dapat berupa URL langsung, Base64, atau HTML iframe.
-        doc.select("select.mirror option[value], select[name*=mirror] option[value], select#server option[value]").forEach { option ->
+        // Mirror option dapat berisi URL langsung, Base64 standar/URL-safe, atau HTML iframe.
+        // Jangan perlakukan string Base64 sebagai path relatif ke domain provider.
+        doc.select(
+            "select.mirror option, select[name*=mirror] option, select#server option, " +
+                "select option[data-src], select option[data-url]"
+        ).forEach { option ->
             val value = option.attr("value").trim()
-            addCandidate(value)
+            val directValues = listOf(
+                value, option.attr("data-src"), option.attr("data-url"),
+                option.attr("data-embed"), option.attr("data-link")
+            )
+            directValues.filter { raw ->
+                raw.startsWith("http://", true) || raw.startsWith("https://", true) ||
+                    raw.startsWith("//") || raw.startsWith("/") ||
+                    raw.startsWith("./") || raw.startsWith("../")
+            }.forEach(::addCandidate)
+
             val decoded = decodeMirror(value) ?: return@forEach
             val decodedDoc = Jsoup.parse(decoded, base)
-            decodedDoc.select("iframe, frame, embed, video source, source[src]").forEach { node ->
-                listOf("src", "data-src", "data-litespeed-src", "data-lazy-src").forEach { attr ->
+            decodedDoc.select("iframe, frame, embed, video, video source, source[src]").forEach { node ->
+                listOf("src", "data-src", "data-litespeed-src", "data-lazy-src", "data-url").forEach { attr ->
                     addCandidate(node.attr(attr))
                 }
             }
             Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
                 addCandidate(it.value.trimEnd(')', ']', ',', ';'))
             }
-            Regex("""(?:src|url)\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+            Regex("""(?:src|url|file)\s*[:=]\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
                 .findAll(decoded).forEach { addCandidate(it.groupValues[1]) }
         }
 
@@ -505,7 +528,7 @@ class OppadramaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val domain = Regex("""https?://([^/]+)""").find(embedUrl)?.groupValues?.getOrNull(1) ?: return false
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
             val code = Regex("""/e/([a-zA-Z0-9_-]+)""").find(embedUrl)?.groupValues?.getOrNull(1) ?: return false
             val apiUrl = "https://$domain/api/videos/$code/"
 
@@ -604,7 +627,7 @@ class OppadramaProvider : MainAPI() {
             }
             if (hashId.isBlank()) return false
 
-            val domain = Regex("""https?://([^/]+)""").find(embedUrl)?.groupValues?.getOrNull(1) ?: return false
+            Regex("""https?://[^\s"'<>]+""").findAll(decoded).forEach {
             val apiUrl = "https://$domain/api/v1/video?id=$hashId"
 
             val hexResp = app.get(
