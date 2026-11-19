@@ -16,6 +16,11 @@ class OploverzProvider : MainAPI() {
     override val hasMainPage = true
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
+    override val mainPage = mainPageOf(
+        "$mainUrl/" to "Rekomendasi",
+        "$mainUrl/series/?status=ongoing&order=update&page=" to "Anime Ongoing",
+        "$mainUrl/page/" to "Update Terbaru"
+    )
 
     private val requestHeaders = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -53,11 +58,21 @@ class OploverzProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val requestedUrl = "$mainUrl/anime-list/page/$page/"
+        val route = request.data
+        val requestedUrl = when {
+            route.endsWith("page=") -> "$route$page"
+            route.trimEnd('/').endsWith("/page") -> "${route.trimEnd('/')}/$page/"
+            route.trimEnd('/') == mainUrl -> if (page <= 1) "$mainUrl/" else "$mainUrl/page/$page/"
+            else -> {
+                val separator = if (route.contains("?")) "&" else "?"
+                if (route.contains("page=")) route.replace(Regex("page=\\d*"), "page=$page")
+                else "$route${separator}page=$page"
+            }
+        }
         val doc = app.get(requestedUrl, referer = "$mainUrl/", headers = requestHeaders).document
         val base = doc.location().takeIf { it.startsWith("http") } ?: requestedUrl
         val items = doc.select(
-            "div.relat > article, .site-main.relat > article, div.relat article, div.bsx"
+            "div.series-gen article.bs, div.series-gen div.bsx, div.relat > article, .site-main.relat > article, div.relat article, div.bsx, article.bs"
         ).mapNotNull { runCatching { it.toResult(base) }.getOrNull() }
             .distinctBy { it.url }
         return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty())
